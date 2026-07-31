@@ -14,11 +14,10 @@ use App\Http\Controllers\Api\{
     NotificationController,
     AuditLogController,
     PasswordResetController,
-    UserDashboardController
+    UserDashboardController,
+    ProfileController
 };
 
-use App\Http\Controllers\Api\ProfileController;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 
@@ -27,42 +26,6 @@ use Illuminate\Support\Facades\Route;
 | PUBLIC ROUTES
 |--------------------------------------------------------------------------
 */
-
-
-/*
-|--------------------------------------------------------------------------
-| Database Connection Test
-|--------------------------------------------------------------------------
-|
-| TEMPORARY ROUTE
-|
-| Used to test whether Laravel can connect to TiDB Cloud from Render.
-| Remove this route after confirming the database connection works.
-|
-*/
-
-Route::get('/db-test', function () {
-
-    try {
-
-        DB::connection()->getPdo();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Database connection successful.',
-            'database' => DB::connection()->getDatabaseName(),
-            'driver' => DB::connection()->getDriverName(),
-        ]);
-
-    } catch (\Throwable $e) {
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Database connection failed.',
-            'error' => $e->getMessage(),
-        ], 500);
-    }
-});
 
 
 /*
