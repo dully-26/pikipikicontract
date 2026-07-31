@@ -2,70 +2,43 @@ FROM php:8.3-apache
 
 WORKDIR /var/www/html
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    git \
     unzip \
+    git \
+    curl \
     libzip-dev \
-    libpng-dev \
-    libjpeg62-turbo-dev \
-    libfreetype6-dev \
-    libonig-dev \
+    && docker-php-ext-install \
+        pdo \
+        pdo_mysql \
+        zip \
+    && a2dismod mpm_event mpm_worker mpm_peruser || true \
+    && a2enmod mpm_prefork \
+    && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure GD
-RUN docker-php-ext-configure gd \
-    --with-freetype \
-    --with-jpeg
+COPY backend/ /var/www/html/
 
-# Install PHP extensions
-RUN docker-php-ext-install \
-    pdo_mysql \
-    mbstring \
-    zip \
-    gd
-
-# Enable Apache rewrite
-RUN a2enmod rewrite
-
-# Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copy Laravel application
-COPY . .
+RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Install Laravel dependencies
-RUN composer install \
-    --no-dev \
-    --optimize-autoloader \
-    --no-interaction
+RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|' \
+    /etc/apache2/sites-available/000-default.conf
 
-# Laravel permissions
-RUN chown -R www-data:www-data \
-    storage \
-    bootstrap/cache
-
-RUN chmod -R 775 \
-    storage \
-    bootstrap/cache
-
-# Apache document root -> Laravel public
-ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
-
-RUN sed -ri \
-    -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' \
-    /etc/apache2/sites-available/*.conf \
-    /etc/apache2/apache2.conf \
-    /etc/apache2/conf-available/*.conf
-
-# Allow Laravel .htaccess
 RUN printf '<Directory /var/www/html/public>\n\
     AllowOverride All\n\
     Require all granted\n\
 </Directory>\n' \
-    > /etc/apache2/conf-available/laravel.conf
+    > /etc/apache2/conf-available/laravel.conf \
+    && a2enconf laravel
 
-RUN a2enconf laravel
+RUN chown -R www-data:www-data \
+    /var/www/html/storage \
+    /var/www/html/bootstrap/cache
+
+RUN chmod -R 775 \
+    /var/www/html/storage \
+    /var/www/html/bootstrap/cache
 
 EXPOSE 80
 
