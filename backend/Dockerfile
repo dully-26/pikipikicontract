@@ -16,9 +16,9 @@ RUN apt-get update && apt-get install -y \
     && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/ /var/www/html/
-
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+COPY . /var/www/html/
 
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
@@ -33,12 +33,12 @@ RUN printf '<Directory /var/www/html/public>\n\
     && a2enconf laravel
 
 RUN chown -R www-data:www-data \
-    /var/www/html/storage \
-    /var/www/html/bootstrap/cache
+    storage \
+    bootstrap/cache
 
 RUN chmod -R 775 \
-    /var/www/html/storage \
-    /var/www/html/bootstrap/cache
+    storage \
+    bootstrap/cache
 
 EXPOSE 80
 
