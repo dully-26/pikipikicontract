@@ -18,39 +18,56 @@ use App\Http\Controllers\Api\{
 };
 
 use App\Http\Controllers\Api\ProfileController;
-
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 
 /*
 |--------------------------------------------------------------------------
-| TEMPORARY DEBUG ROUTE
+| PUBLIC ROUTES
 |--------------------------------------------------------------------------
 */
-Route::get('/debug-check', function () {
 
-    $reflection = new \ReflectionClass(
-        \App\Http\Controllers\Api\ContractController::class
-    );
 
-    return response()->json([
-        'method_exists' => method_exists(
-            \App\Http\Controllers\Api\ContractController::class,
-            'accept'
-        ),
+/*
+|--------------------------------------------------------------------------
+| Database Connection Test
+|--------------------------------------------------------------------------
+|
+| TEMPORARY ROUTE
+|
+| Used to test whether Laravel can connect to TiDB Cloud from Render.
+| Remove this route after confirming the database connection works.
+|
+*/
 
-        'file_path' => $reflection->getFileName(),
+Route::get('/db-test', function () {
 
-        'all_methods' => get_class_methods(
-            \App\Http\Controllers\Api\ContractController::class
-        ),
-    ]);
+    try {
+
+        DB::connection()->getPdo();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Database connection successful.',
+            'database' => DB::connection()->getDatabaseName(),
+            'driver' => DB::connection()->getDriverName(),
+        ]);
+
+    } catch (\Throwable $e) {
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Database connection failed.',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
 });
 
 
 /*
 |--------------------------------------------------------------------------
-| PUBLIC ROUTES
+| Authentication
 |--------------------------------------------------------------------------
 */
 
@@ -74,6 +91,13 @@ Route::post('/reset-password', [
     'reset'
 ]);
 
+
+/*
+|--------------------------------------------------------------------------
+| Flutterwave Webhook
+|--------------------------------------------------------------------------
+*/
+
 Route::post('/webhooks/flutterwave', [
     PaymentController::class,
     'webhook'
@@ -87,6 +111,7 @@ Route::post('/webhooks/flutterwave', [
 */
 
 Route::middleware('auth:sanctum')->group(function () {
+
 
     /*
     |--------------------------------------------------------------------------
@@ -138,34 +163,16 @@ Route::middleware('auth:sanctum')->group(function () {
         'index'
     ]);
 
-    /*
-     * User requests to buy motorcycle
-     */
     Route::post('/marketplace/purchase-requests', [
         SaleController::class,
         'store'
     ]);
 
-    /*
-     * Purchase requests
-     *
-     * User:
-     *   Sees requests related to themselves.
-     *
-     * Manager:
-     *   Sees all purchase requests.
-     *
-     * Admin:
-     *   Sees all purchase requests.
-     */
     Route::get('/marketplace/requests', [
         SaleController::class,
         'indexRequests'
     ]);
 
-    /*
-     * Approve / Reject / Complete purchase request
-     */
     Route::patch('/marketplace/requests/{id}/status', [
         SaleController::class,
         'updateStatus'
@@ -311,11 +318,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | MANAGER + ADMIN ONLY
+    | MANAGER + ADMIN
     |--------------------------------------------------------------------------
     */
 
     Route::middleware('role:manager,admin')->group(function () {
+
 
         /*
         |--------------------------------------------------------------------------
@@ -346,11 +354,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
         /*
         |--------------------------------------------------------------------------
-        | PURCHASE REQUEST MANAGEMENT
+        | Marketplace Request Management
         |--------------------------------------------------------------------------
-        |
-        | Manager/Admin can view purchase requests and buyer details.
-        |
         */
 
         Route::get('/manager/marketplace/requests', [
@@ -483,6 +488,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware('role:admin')->group(function () {
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | Users
+        |--------------------------------------------------------------------------
+        */
+
         Route::get('/users', [
             UserController::class,
             'index'
@@ -518,6 +530,13 @@ Route::middleware('auth:sanctum')->group(function () {
             'destroy'
         ]);
 
+
+        /*
+        |--------------------------------------------------------------------------
+        | Audit Logs
+        |--------------------------------------------------------------------------
+        */
+
         Route::get('/audit-logs', [
             AuditLogController::class,
             'index'
@@ -525,3 +544,4 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
 });
+
