@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     git \
     curl \
     libzip-dev \
+    ca-certificates \
     && docker-php-ext-install \
         pdo \
         pdo_mysql \
@@ -18,9 +19,18 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-COPY . /var/www/html/
+# Copy Laravel backend
+COPY backend/ /var/www/html/
 
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+# TiDB Cloud CA certificate
+COPY backend/certs/isrgrootx1.pem /etc/ssl/certs/isrgrootx1.pem
+
+RUN chmod 644 /etc/ssl/certs/isrgrootx1.pem
+
+RUN composer install \
+    --no-dev \
+    --optimize-autoloader \
+    --no-interaction
 
 RUN sed -i 's|DocumentRoot /var/www/html|DocumentRoot /var/www/html/public|' \
     /etc/apache2/sites-available/000-default.conf
