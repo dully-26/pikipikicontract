@@ -19,11 +19,9 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copy Laravel backend
-COPY backend/ /var/www/html/
+COPY . /var/www/html/
 
-# TiDB Cloud CA certificate
-COPY backend/certs/isrgrootx1.pem /etc/ssl/certs/isrgrootx1.pem
+COPY certs/isrgrootx1.pem /etc/ssl/certs/isrgrootx1.pem
 
 RUN chmod 644 /etc/ssl/certs/isrgrootx1.pem
 
