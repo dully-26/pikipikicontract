@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://pikipikicontract.onrender.com/api',
+  baseURL: import.meta.env.VITE_API_URL,
   headers: {
     Accept: 'application/json',
   },
@@ -15,7 +15,6 @@ api.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
 
-    // Allow Axios/browser to set the correct multipart boundary for FormData
     if (config.data instanceof FormData) {
       delete config.headers['Content-Type'];
       delete config.headers['content-type'];
@@ -30,18 +29,14 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
   (response) => response,
-
   (error) => {
     const isAuthRoute =
       error.config?.url?.includes('/login') ||
-      error.config?.url?.includes('/register') ||
-      error.config?.url?.includes('/forgot-password') ||
-      error.config?.url?.includes('/reset-password');
+      error.config?.url?.includes('/register');
 
     if (error.response?.status === 401 && !isAuthRoute) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-
       window.location.href = '/login';
     }
 
@@ -50,4 +45,3 @@ api.interceptors.response.use(
 );
 
 export default api;
-
