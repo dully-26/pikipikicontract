@@ -13,17 +13,19 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
 
+        // Application middleware aliases
         $middleware->alias([
             'role' => \App\Http\Middleware\CheckRole::class,
         ]);
 
-        // Enable CORS middleware
-        $middleware->append(
-            \Illuminate\Http\Middleware\HandleCors::class
-        );
-
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+
+        // Return JSON instead of redirecting API users
+        // to a non-existent "login" route.
+        $exceptions->shouldRenderJsonWhen(function ($request, $input) {
+            return $request->is('api/*') || $request->expectsJson();
+        });
+
     })
     ->create();
