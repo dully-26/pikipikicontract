@@ -7,22 +7,24 @@ return [
         'sanctum/csrf-cookie',
     ],
 
-    'allowed_methods' => ['*'],
+    'allowed_methods' => [
+        '*',
+    ],
 
     'allowed_origins' => [
-        'http://localhost:5173',
-        'http://127.0.0.1:5173',
-        'https://contract-pikipiki.onrender.com',
+        'https://pikipikicontract-1.onrender.com',
     ],
 
     'allowed_origins_patterns' => [],
 
-    'allowed_headers' => ['*'],
+    'allowed_headers' => [
+        '*',
+    ],
 
     'exposed_headers' => [],
 
     'max_age' => 0,
 
-    'supports_credentials' => true,
+    'supports_credentials' => false,
 
 ];
