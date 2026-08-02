@@ -14,10 +14,7 @@ use CloudinaryLabs\CloudinaryLaravel\Facades\Cloudinary;
 class ContractRequestController extends Controller
 {
     /**
-     * Display contract requests.
-     *
-     * Normal users only see their own requests.
-     * Managers/Admins can see all requests.
+     * Get contract requests.
      */
     public function index(Request $request)
     {
@@ -47,7 +44,7 @@ class ContractRequestController extends Controller
     }
 
     /**
-     * Show a single contract request.
+     * Show one contract request.
      */
     public function show($id)
     {
@@ -61,27 +58,10 @@ class ContractRequestController extends Controller
     }
 
     /**
-     * Submit a new contract request.
-     *
-     * Applicant photo:
-     *
-     * 1. If the user uploads a new photo:
-     *    upload it to Cloudinary.
-     *
-     * 2. If the user does not upload a new photo:
-     *    use their existing profile photo.
-     *
-     * 3. If neither exists:
-     *    reject the request.
+     * Submit contract request.
      */
     public function store(Request $request)
     {
-        /*
-        |--------------------------------------------------------------------------
-        | Validation
-        |--------------------------------------------------------------------------
-        */
-
         $validator = Validator::make(
             $request->all(),
             [
@@ -98,27 +78,12 @@ class ContractRequestController extends Controller
 
         if ($validator->fails()) {
             return response()->json([
-                'message' =>
-                    'Taarifa ulizoingiza hazijakubaliki.',
-
-                'errors' =>
-                    $validator->errors(),
+                'message' => 'Taarifa ulizoingiza si sahihi.',
+                'errors' => $validator->errors(),
             ], 422);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | User
-        |--------------------------------------------------------------------------
-        */
-
         $user = $request->user();
-
-        /*
-        |--------------------------------------------------------------------------
-        | Motorcycle
-        |--------------------------------------------------------------------------
-        */
 
         $motorcycle = Motorcycle::findOrFail(
             $request->motorcycle_id
@@ -126,33 +91,27 @@ class ContractRequestController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | Check Listing Type
+        | Motorcycle validation
         |--------------------------------------------------------------------------
         */
 
         if ($motorcycle->listing_type !== 'contract') {
             return response()->json([
                 'message' =>
-                    'Pikipiki hii haipatikani kwa mkataba.',
+                    'This motorcycle is not available for contract.'
             ], 422);
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Check Motorcycle Availability
-        |--------------------------------------------------------------------------
-        */
 
         if ($motorcycle->status !== 'available') {
             return response()->json([
                 'message' =>
-                    'Pikipiki hii haipatikani kwa sasa.',
+                    'Motorcycle is not available.'
             ], 422);
         }
 
         /*
         |--------------------------------------------------------------------------
-        | Check Existing Pending Request
+        | Check duplicate pending request
         |--------------------------------------------------------------------------
         */
 
@@ -160,20 +119,20 @@ class ContractRequestController extends Controller
             'user_id',
             $user->id
         )
-        ->where(
-            'motorcycle_id',
-            $motorcycle->id
-        )
-        ->where(
-            'status',
-            'pending'
-        )
-        ->first();
+            ->where(
+                'motorcycle_id',
+                $motorcycle->id
+            )
+            ->where(
+                'status',
+                'pending'
+            )
+            ->first();
 
         if ($existing) {
             return response()->json([
                 'message' =>
-                    'Tayari una ombi linalosubiri kwa pikipiki hii.',
+                    'You already have a pending request for this motorcycle.'
             ], 422);
         }
 
@@ -181,25 +140,20 @@ class ContractRequestController extends Controller
         |--------------------------------------------------------------------------
         | Applicant Photo
         |--------------------------------------------------------------------------
+        |
+        | Priority:
+        |
+        | 1. New photo selected in request
+        | 2. Existing profile photo
+        | 3. Reject request
+        |
         */
 
         $photoUrl = null;
 
         /*
         |--------------------------------------------------------------------------
-        | New Applicant Photo
-        |--------------------------------------------------------------------------
-        |
-        | IMPORTANT:
-        |
-        | Cloudinary Laravel v3 does NOT use:
-        |
-        | cloudinary()->upload()
-        |
-        | It uses:
-        |
-        | Cloudinary::uploadApi()->upload()
-        |
+        | NEW PHOTO
         |--------------------------------------------------------------------------
         */
 
@@ -207,27 +161,29 @@ class ContractRequestController extends Controller
 
             try {
 
-                $result = Cloudinary::uploadApi()->upload(
-                    $request
-                        ->file('applicant_photo')
-                        ->getRealPath(),
-                    [
-                        'folder' =>
-                            'mtema-project/applicant_photos',
+                $uploadedFile =
+                    Cloudinary::uploadApi()->upload(
+                        $request
+                            ->file('applicant_photo')
+                            ->getRealPath(),
+                        [
+                            'folder' =>
+                                'mtema-project/applicant_photos',
 
-                        'resource_type' =>
-                            'image',
-                    ]
-                );
+                            'resource_type' =>
+                                'image',
+                        ]
+                    );
 
                 /*
-                |--------------------------------------------------------------------------
-                | Get Secure Cloudinary URL
-                |--------------------------------------------------------------------------
+                |----------------------------------------------------------------------
+                | Cloudinary returns an array.
+                |----------------------------------------------------------------------
                 */
 
                 $photoUrl =
-                    $result['secure_url'] ?? null;
+                    $uploadedFile['secure_url']
+                    ?? null;
 
                 if (!$photoUrl) {
                     throw new \Exception(
@@ -237,14 +193,8 @@ class ContractRequestController extends Controller
 
             } catch (\Throwable $e) {
 
-                /*
-                |--------------------------------------------------------------------------
-                | Log Error
-                |--------------------------------------------------------------------------
-                */
-
                 \Log::error(
-                    'Cloudinary applicant photo upload failed',
+                    'Contract applicant photo upload failed',
                     [
                         'user_id' =>
                             $user->id,
@@ -259,7 +209,7 @@ class ContractRequestController extends Controller
 
                 return response()->json([
                     'message' =>
-                        'Imeshindwa kupakia picha yako kwenye Cloudinary.',
+                        'Imeshindwa kupakia picha kwenye Cloudinary.',
 
                     'error' =>
                         config('app.debug')
@@ -272,23 +222,22 @@ class ContractRequestController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | Use Existing Profile Photo
+        | USE PROFILE PHOTO
         |--------------------------------------------------------------------------
-        |
-        | If the user did not upload a new photo,
-        | use their existing profile photo.
-        |
         */
 
-        elseif ($user->profile_photo) {
+        elseif (
+            !empty($user->profile_photo)
+        ) {
 
             $photoUrl =
                 $user->profile_photo;
+
         }
 
         /*
         |--------------------------------------------------------------------------
-        | No Photo
+        | NO PHOTO
         |--------------------------------------------------------------------------
         */
 
@@ -296,7 +245,7 @@ class ContractRequestController extends Controller
 
             return response()->json([
                 'message' =>
-                    'Tafadhali pakia picha yako kabla ya kuwasilisha ombi.',
+                    'Tafadhali pakia picha yako au weka picha ya profaili kwanza.'
             ], 422);
         }
 
@@ -306,22 +255,23 @@ class ContractRequestController extends Controller
         |--------------------------------------------------------------------------
         */
 
-        $reqModel = ContractRequest::create([
-            'user_id' =>
-                $user->id,
+        $contractRequest =
+            ContractRequest::create([
+                'user_id' =>
+                    $user->id,
 
-            'motorcycle_id' =>
-                $motorcycle->id,
+                'motorcycle_id' =>
+                    $motorcycle->id,
 
-            'notes' =>
-                $request->notes,
+                'notes' =>
+                    $request->notes,
 
-            'applicant_photo' =>
-                $photoUrl,
+                'applicant_photo' =>
+                    $photoUrl,
 
-            'status' =>
-                'pending',
-        ]);
+                'status' =>
+                    'pending',
+            ]);
 
         /*
         |--------------------------------------------------------------------------
@@ -333,128 +283,8 @@ class ContractRequestController extends Controller
             $user->id,
             'submitted_contract_request',
             'ContractRequest',
-            $reqModel->id,
+            $contractRequest->id,
             "Requested {$motorcycle->brand} {$motorcycle->model}"
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | Return Created Request
-        |--------------------------------------------------------------------------
-        */
-
-        return response()->json(
-            $reqModel->load([
-                'user',
-                'motorcycle',
-                'contract'
-            ]),
-            201
-        );
-    }
-
-    /**
-     * Manager/Admin approves or rejects
-     * a pending contract request.
-     */
-    public function updateStatus(
-        Request $request,
-        $id
-    ) {
-        /*
-        |--------------------------------------------------------------------------
-        | Validation
-        |--------------------------------------------------------------------------
-        */
-
-        $request->validate([
-            'status' =>
-                'required|in:approved,rejected',
-        ]);
-
-        /*
-        |--------------------------------------------------------------------------
-        | Contract Request
-        |--------------------------------------------------------------------------
-        */
-
-        $cr = ContractRequest::with([
-            'motorcycle',
-            'user'
-        ])->findOrFail($id);
-
-        /*
-        |--------------------------------------------------------------------------
-        | Already Reviewed
-        |--------------------------------------------------------------------------
-        */
-
-        if ($cr->status !== 'pending') {
-            return response()->json([
-                'message' =>
-                    'Ombi hili tayari limepitiwa.',
-            ], 422);
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Update Request Status
-        |--------------------------------------------------------------------------
-        */
-
-        $cr->update([
-            'status' =>
-                $request->status,
-
-            'reviewed_by' =>
-                $request->user()->id,
-        ]);
-
-        /*
-        |--------------------------------------------------------------------------
-        | Motorcycle Status
-        |--------------------------------------------------------------------------
-        */
-
-        if ($request->status === 'approved') {
-
-            $cr->motorcycle->update([
-                'status' =>
-                    'rented',
-            ]);
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Audit Log
-        |--------------------------------------------------------------------------
-        */
-
-        AuditLogger::log(
-            $request->user()->id,
-            "contract_request_{$request->status}",
-            'ContractRequest',
-            $cr->id,
-            "{$cr->motorcycle->brand} {$cr->motorcycle->model} request {$request->status}"
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | Notification
-        |--------------------------------------------------------------------------
-        */
-
-        NotificationService::send(
-            $cr->user_id,
-
-            'Contract Request ' .
-                ucfirst(
-                    $request->status
-                ),
-
-            "Your request for {$cr->motorcycle->brand} {$cr->motorcycle->model} was {$request->status}.",
-
-            'contract'
         );
 
         /*
@@ -464,7 +294,114 @@ class ContractRequestController extends Controller
         */
 
         return response()->json(
-            $cr->fresh([
+            $contractRequest->load([
+                'user',
+                'motorcycle',
+                'contract'
+            ]),
+            201
+        );
+    }
+
+    /**
+     * Approve or reject contract request.
+     */
+    public function updateStatus(
+        Request $request,
+        $id
+    ) {
+        $request->validate([
+            'status' =>
+                'required|in:approved,rejected'
+        ]);
+
+        $contractRequest =
+            ContractRequest::with([
+                'motorcycle',
+                'user'
+            ])->findOrFail($id);
+
+        if (
+            $contractRequest->status !==
+            'pending'
+        ) {
+            return response()->json([
+                'message' =>
+                    'This request has already been reviewed.'
+            ], 422);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Update request
+        |--------------------------------------------------------------------------
+        */
+
+        $contractRequest->update([
+            'status' =>
+                $request->status,
+
+            'reviewed_by' =>
+                $request->user()->id,
+        ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Motorcycle status
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            $request->status ===
+            'approved'
+        ) {
+
+            $contractRequest
+                ->motorcycle
+                ->update([
+                    'status' =>
+                        'rented'
+                ]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Audit
+        |--------------------------------------------------------------------------
+        */
+
+        AuditLogger::log(
+            $request->user()->id,
+            "contract_request_{$request->status}",
+            'ContractRequest',
+            $contractRequest->id,
+            "{$contractRequest->motorcycle->brand} {$contractRequest->motorcycle->model} request {$request->status}"
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Notification
+        |--------------------------------------------------------------------------
+        */
+
+        NotificationService::send(
+            $contractRequest->user_id,
+            'Contract Request ' .
+                ucfirst(
+                    $request->status
+                ),
+            "Your request for {$contractRequest->motorcycle->brand} {$contractRequest->motorcycle->model} was {$request->status}.",
+            'contract'
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Return updated request
+        |--------------------------------------------------------------------------
+        */
+
+        return response()->json(
+            $contractRequest->fresh([
                 'user',
                 'motorcycle',
                 'contract'
@@ -472,4 +409,3 @@ class ContractRequestController extends Controller
         );
     }
 }
-
