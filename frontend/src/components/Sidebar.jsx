@@ -130,7 +130,7 @@ const userLinks = links[user.role] || [];
 
 return ( <aside className="sidebar">
 
-```
+
   <div className="sidebar-brand">
     🏍️ MotoContract
   </div>
