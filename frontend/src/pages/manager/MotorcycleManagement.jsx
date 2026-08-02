@@ -27,11 +27,19 @@ export default function MotorcycleManagement() {
   const [editingId, setEditingId] = useState(null);
 
   const [form, setForm] = useState(emptyForm);
+
+  // Original/compressed selected images
   const [photos, setPhotos] = useState([]);
+
+  // Preview URLs
+  const [photoPreviews, setPhotoPreviews] = useState([]);
 
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState('');
+
+  // Separate states
   const [submitting, setSubmitting] = useState(false);
+  const [processingImages, setProcessingImages] = useState(false);
 
   /*
    * ============================================================
@@ -55,7 +63,7 @@ export default function MotorcycleManagement() {
 
       setMessage(
         err.response?.data?.message ||
-        'Failed to load motorcycles'
+          'Failed to load motorcycles'
       );
     } finally {
       setLoading(false);
@@ -68,11 +76,27 @@ export default function MotorcycleManagement() {
 
   /*
    * ============================================================
+   * CLEAN PREVIEW URLS
+   * ============================================================
+   */
+
+  useEffect(() => {
+    return () => {
+      photoPreviews.forEach((url) => {
+        URL.revokeObjectURL(url);
+      });
+    };
+  }, [photoPreviews]);
+
+  /*
+   * ============================================================
    * ADD MODAL
    * ============================================================
    */
 
   const openAddModal = () => {
+    clearPhotoPreviews();
+
     setForm({
       ...emptyForm,
     });
@@ -91,6 +115,8 @@ export default function MotorcycleManagement() {
    */
 
   const openEditModal = (m) => {
+    clearPhotoPreviews();
+
     setForm({
       brand: m.brand || '',
       model: m.model || '',
@@ -137,58 +163,140 @@ export default function MotorcycleManagement() {
 
   /*
    * ============================================================
+   * CLEAR PHOTO PREVIEWS
+   * ============================================================
+   */
+
+  const clearPhotoPreviews = () => {
+    setPhotoPreviews((oldPreviews) => {
+      oldPreviews.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.warn(
+            'Failed to revoke preview URL:',
+            error
+          );
+        }
+      });
+
+      return [];
+    });
+  };
+
+  /*
+   * ============================================================
    * IMAGE COMPRESSION
    * ============================================================
    *
-   * Images are compressed in the browser BEFORE being sent
-   * to Laravel/Cloudinary.
+   * Mobile-friendly compression.
    *
-   * Maximum size target:
-   * approximately 0.8 MB
+   * Target:
+   * - Maximum approximately 0.8MB
+   * - Maximum dimension 1200px
+   * - JPEG for better mobile compatibility
    *
-   * Maximum dimensions:
-   * 1600 x 1600
-   *
-   * Output:
-   * WebP
+   * We first try Web Worker.
+   * If the browser fails, we retry without Web Worker.
    */
 
   const compressImage = async (file) => {
     const options = {
       maxSizeMB: 0.8,
-      maxWidthOrHeight: 1600,
+      maxWidthOrHeight: 1200,
+
+      // Better compatibility on phones
+      fileType: 'image/jpeg',
+
+      // Good quality while keeping file small
+      initialQuality: 0.78,
+
+      // Try worker first
       useWebWorker: true,
-      fileType: 'image/webp',
-      initialQuality: 0.8,
+
+      // Avoid keeping huge images in memory
+      alwaysKeepResolution: false,
     };
 
-    const compressedBlob = await imageCompression(
-      file,
-      options
-    );
+    try {
+      const compressedBlob =
+        await imageCompression(
+          file,
+          options
+        );
 
-    /*
-     * Convert Blob to File
-     *
-     * Laravel will receive this as a normal uploaded file.
-     */
+      const originalName =
+        file.name
+          .replace(/\.[^/.]+$/, '')
+          .replace(/[^a-zA-Z0-9_-]/g, '_') ||
+        'motorcycle-image';
 
-    const originalName =
-      file.name
-        .split('.')
-        .slice(0, -1)
-        .join('.') || 'motorcycle-image';
+      return new File(
+        [compressedBlob],
+        `${originalName}.jpg`,
+        {
+          type: 'image/jpeg',
+          lastModified: Date.now(),
+        }
+      );
+    } catch (workerError) {
+      /*
+       * ========================================================
+       * FALLBACK
+       * ========================================================
+       *
+       * Some mobile browsers may fail with Web Worker.
+       * Retry without Web Worker.
+       */
 
-    const compressedFile = new File(
-      [compressedBlob],
-      `${originalName}.webp`,
-      {
-        type: 'image/webp',
-        lastModified: Date.now(),
+      console.warn(
+        'Web Worker compression failed. Retrying without worker...',
+        workerError
+      );
+
+      try {
+        const fallbackOptions = {
+          maxSizeMB: 0.8,
+          maxWidthOrHeight: 1200,
+          fileType: 'image/jpeg',
+          initialQuality: 0.72,
+          useWebWorker: false,
+          alwaysKeepResolution: false,
+        };
+
+        const compressedBlob =
+          await imageCompression(
+            file,
+            fallbackOptions
+          );
+
+        const originalName =
+          file.name
+            .replace(/\.[^/.]+$/, '')
+            .replace(
+              /[^a-zA-Z0-9_-]/g,
+              '_'
+            ) || 'motorcycle-image';
+
+        return new File(
+          [compressedBlob],
+          `${originalName}.jpg`,
+          {
+            type: 'image/jpeg',
+            lastModified: Date.now(),
+          }
+        );
+      } catch (fallbackError) {
+        console.error(
+          'Fallback image compression failed:',
+          fallbackError
+        );
+
+        throw new Error(
+          `Failed to process ${file.name}. Please try a different image.`
+        );
       }
-    );
-
-    return compressedFile;
+    }
   };
 
   /*
@@ -198,7 +306,10 @@ export default function MotorcycleManagement() {
    */
 
   const handlePhotoChange = async (e) => {
-    const files = Array.from(e.target.files || []);
+    const input = e.target;
+    const files = Array.from(
+      input.files || []
+    );
 
     if (files.length === 0) {
       return;
@@ -209,54 +320,84 @@ export default function MotorcycleManagement() {
       photos: undefined,
     }));
 
-    setSubmitting(true);
+    setProcessingImages(true);
 
     try {
       /*
-       * Only allow image files
+       * --------------------------------------------------------
+       * Only images
+       * --------------------------------------------------------
        */
 
-      const imageFiles = files.filter((file) =>
-        file.type.startsWith('image/')
+      const imageFiles = files.filter(
+        (file) =>
+          file.type &&
+          file.type.startsWith('image/')
       );
 
-      if (imageFiles.length !== files.length) {
-        setErrors({
-          photos:
-            'Only image files are allowed.',
-        });
-
-        setPhotos([]);
-
-        return;
+      if (
+        imageFiles.length !== files.length
+      ) {
+        throw new Error(
+          'Only image files are allowed.'
+        );
       }
 
       /*
-       * Compress every selected image
+       * --------------------------------------------------------
+       * Maximum number of photos
+       * --------------------------------------------------------
+       */
+
+      if (imageFiles.length > 6) {
+        throw new Error(
+          'You can select a maximum of 6 images.'
+        );
+      }
+
+      /*
+       * --------------------------------------------------------
+       * Maximum original file size
+       *
+       * We allow large phone photos but avoid
+       * extremely huge files that can crash
+       * mobile browsers during compression.
+       * --------------------------------------------------------
+       */
+
+      for (const file of imageFiles) {
+        if (
+          file.size >
+          25 * 1024 * 1024
+        ) {
+          throw new Error(
+            `${file.name} is larger than 25MB. Please choose a smaller image.`
+          );
+        }
+      }
+
+      /*
+       * --------------------------------------------------------
+       * Compress images
+       * --------------------------------------------------------
        */
 
       const compressedFiles = [];
 
-      for (const file of imageFiles) {
-        /*
-         * Safety check for extremely large files.
-         *
-         * We allow compression to handle normal large images,
-         * but reject files larger than 20MB before processing.
-         */
-
-        if (file.size > 20 * 1024 * 1024) {
-          throw new Error(
-            `${file.name} is larger than 20MB.`
-          );
-        }
+      for (
+        let index = 0;
+        index < imageFiles.length;
+        index++
+      ) {
+        const file = imageFiles[index];
 
         console.log(
-          `Compressing ${file.name}...`
+          `Processing image ${index + 1}/${imageFiles.length}:`,
+          file.name
         );
 
         console.log(
-          'Original size:',
+          'Original:',
           `${(
             file.size /
             1024 /
@@ -268,7 +409,7 @@ export default function MotorcycleManagement() {
           await compressImage(file);
 
         console.log(
-          'Compressed size:',
+          'Compressed:',
           `${(
             compressedFile.size /
             1024 /
@@ -276,68 +417,119 @@ export default function MotorcycleManagement() {
           ).toFixed(2)} MB`
         );
 
+        /*
+         * Final backend safety limit
+         */
+
+        if (
+          compressedFile.size >
+          5 * 1024 * 1024
+        ) {
+          throw new Error(
+            `${file.name} could not be compressed below 5MB.`
+          );
+        }
+
         compressedFiles.push(
           compressedFile
         );
       }
 
       /*
-       * Final safety check.
-       *
-       * Laravel currently accepts maximum 5MB
-       * per image.
+       * --------------------------------------------------------
+       * Create previews
+       * --------------------------------------------------------
        */
 
-      const validFiles =
-        compressedFiles.filter(
-          (file) =>
-            file.size <=
-            5 * 1024 * 1024
+      clearPhotoPreviews();
+
+      const previewUrls =
+        compressedFiles.map((file) =>
+          URL.createObjectURL(file)
         );
 
-      if (
-        validFiles.length !==
-        compressedFiles.length
-      ) {
-        setErrors({
-          photos:
-            'One or more images are still larger than 5MB after compression.',
-        });
-
-        setPhotos([]);
-
-        return;
-      }
+      setPhotoPreviews(
+        previewUrls
+      );
 
       /*
+       * --------------------------------------------------------
        * Save compressed files
+       * --------------------------------------------------------
        */
 
-      setPhotos(validFiles);
+      setPhotos(
+        compressedFiles
+      );
+
+      setErrors((prev) => ({
+        ...prev,
+        photos: undefined,
+      }));
 
     } catch (error) {
       console.error(
-        'Image compression error:',
+        'Image processing error:',
         error
       );
+
+      clearPhotoPreviews();
 
       setPhotos([]);
 
       setErrors({
         photos:
-          error.message ||
+          error?.message ||
           'Failed to process the selected images. Please try again.',
       });
 
     } finally {
-      setSubmitting(false);
+      setProcessingImages(false);
 
       /*
-       * Allow selecting the same file again.
+       * Allow user to select
+       * the same image again.
        */
 
-      e.target.value = '';
+      input.value = '';
     }
+  };
+
+  /*
+   * ============================================================
+   * REMOVE SELECTED PHOTO
+   * ============================================================
+   */
+
+  const removePhoto = (index) => {
+    const newPhotos = photos.filter(
+      (_, i) => i !== index
+    );
+
+    const newPreviews =
+      photoPreviews.filter(
+        (_, i) => i !== index
+      );
+
+    /*
+     * Revoke removed preview URL
+     */
+
+    if (photoPreviews[index]) {
+      try {
+        URL.revokeObjectURL(
+          photoPreviews[index]
+        );
+      } catch (error) {
+        console.warn(
+          'Preview cleanup failed:',
+          error
+        );
+      }
+    }
+
+    setPhotos(newPhotos);
+    setPhotoPreviews(newPreviews);
   };
 
   /*
@@ -351,6 +543,19 @@ export default function MotorcycleManagement() {
 
     setErrors({});
     setMessage('');
+
+    /*
+     * Do not submit while images are processing.
+     */
+
+    if (processingImages) {
+      setErrors({
+        general:
+          'Please wait for the images to finish processing.',
+      });
+
+      return;
+    }
 
     /*
      * Frontend validation
@@ -367,7 +572,7 @@ export default function MotorcycleManagement() {
     }
 
     /*
-     * Image is required when adding.
+     * Image required when adding.
      */
 
     if (
@@ -389,50 +594,89 @@ export default function MotorcycleManagement() {
        * ========================================================
        * EDIT MOTORCYCLE
        * ========================================================
+       *
+       * IMPORTANT:
+       * For SALE:
+       * contract prices must NOT be sent as null.
+       *
+       * Database columns are NOT nullable.
        */
 
       if (editingId) {
+        const updateData = {
+          brand: form.brand,
+          model: form.model,
+          year: form.year,
+
+          condition:
+            form.condition,
+
+          description:
+            form.description || null,
+        };
+
+        /*
+         * CONTRACT
+         */
+
+        if (
+          form.listing_type ===
+          'contract'
+        ) {
+          updateData.daily_price =
+            form.daily_price || 0;
+
+          updateData.monthly_price =
+            form.monthly_price || 0;
+
+          updateData.total_contract_price =
+            form.total_contract_price || 0;
+
+          /*
+           * Sale price must be numeric
+           * because database may also be
+           * configured as non-null.
+           */
+
+          updateData.sale_price =
+            form.sale_price || 0;
+        }
+
+        /*
+         * SALE
+         */
+
+        else {
+          /*
+           * IMPORTANT FIX:
+           *
+           * Do NOT send null for
+           * daily_price/monthly_price/
+           * total_contract_price.
+           */
+
+          updateData.daily_price = 0;
+
+          updateData.monthly_price = 0;
+
+          updateData.total_contract_price = 0;
+
+          updateData.sale_price =
+            form.sale_price || 0;
+        }
+
+        console.log(
+          'Updating motorcycle:',
+          updateData
+        );
+
         await api.put(
           `/motorcycles/${editingId}`,
-          {
-            brand: form.brand,
-            model: form.model,
-            year: form.year,
-
-            daily_price:
-              form.listing_type ===
-              'contract'
-                ? form.daily_price
-                : null,
-
-            monthly_price:
-              form.listing_type ===
-              'contract'
-                ? form.monthly_price
-                : null,
-
-            total_contract_price:
-              form.listing_type ===
-              'contract'
-                ? form.total_contract_price
-                : null,
-
-            sale_price:
-              form.listing_type ===
-              'sale'
-                ? form.sale_price
-                : null,
-
-            condition:
-              form.condition,
-
-            description:
-              form.description,
-          }
+          updateData
         );
 
         setMessage(
-          'Motorcycle updated successfully'
+          'Motorcycle updated successfully.'
         );
       }
 
@@ -487,7 +731,9 @@ export default function MotorcycleManagement() {
         }
 
         /*
-         * Contract
+         * ------------------------------------------------------
+         * CONTRACT
+         * ------------------------------------------------------
          */
 
         if (
@@ -514,16 +760,47 @@ export default function MotorcycleManagement() {
               form.total_contract_price
             )
           );
+
+          /*
+           * Keep sale price as 0
+           * if database column is NOT NULL.
+           */
+
+          data.append(
+            'sale_price',
+            '0'
+          );
         }
 
         /*
-         * Sale
+         * ------------------------------------------------------
+         * SALE
+         * ------------------------------------------------------
          */
 
         if (
           form.listing_type ===
           'sale'
         ) {
+          /*
+           * Database-safe values.
+           */
+
+          data.append(
+            'daily_price',
+            '0'
+          );
+
+          data.append(
+            'monthly_price',
+            '0'
+          );
+
+          data.append(
+            'total_contract_price',
+            '0'
+          );
+
           data.append(
             'sale_price',
             String(
@@ -533,17 +810,9 @@ export default function MotorcycleManagement() {
         }
 
         /*
-         * ======================================================
+         * ------------------------------------------------------
          * PHOTOS
-         * ======================================================
-         *
-         * IMPORTANT:
-         *
-         * These are already compressed WebP files.
-         *
-         * Laravel expects:
-         *
-         * photos[]
+         * ------------------------------------------------------
          */
 
         photos.forEach(
@@ -557,7 +826,7 @@ export default function MotorcycleManagement() {
         );
 
         /*
-         * DEBUG INFORMATION
+         * DEBUG
          */
 
         console.log(
@@ -596,12 +865,8 @@ export default function MotorcycleManagement() {
         );
 
         /*
-         * IMPORTANT:
-         *
-         * DO NOT manually set Content-Type.
-         *
-         * Axios/browser will automatically
-         * create multipart/form-data boundary.
+         * Axios will automatically
+         * create multipart boundary.
          */
 
         await api.post(
@@ -610,19 +875,19 @@ export default function MotorcycleManagement() {
         );
 
         setMessage(
-          'Motorcycle added successfully'
+          'Motorcycle added successfully.'
         );
       }
 
       /*
-       * Close modal
+       * ========================================================
+       * CLEAN UP
+       * ========================================================
        */
+
+      clearPhotoPreviews();
 
       setShowModal(false);
-
-      /*
-       * Clear form
-       */
 
       setForm({
         ...emptyForm,
@@ -663,14 +928,14 @@ export default function MotorcycleManagement() {
           apiErrors
         ).forEach((key) => {
           flat[key] =
-            apiErrors[key][0];
+            Array.isArray(
+              apiErrors[key]
+            )
+              ? apiErrors[key][0]
+              : apiErrors[key];
         });
 
         setErrors(flat);
-
-        /*
-         * Also show general Laravel message
-         */
 
         if (
           err.response?.data
@@ -689,6 +954,26 @@ export default function MotorcycleManagement() {
       }
 
       /*
+       * Cloudinary error
+       */
+
+      else if (
+        err.response?.data
+          ?.error
+      ) {
+        setErrors({
+          general:
+            err.response.data
+              .message ||
+            'Image upload failed.',
+
+          photos:
+            err.response.data
+              .error,
+        });
+      }
+
+      /*
        * General error
        */
 
@@ -697,6 +982,7 @@ export default function MotorcycleManagement() {
           general:
             err.response?.data
               ?.message ||
+            err.message ||
             'Operation failed. Please try again.',
         });
       }
@@ -735,7 +1021,7 @@ export default function MotorcycleManagement() {
       setMessage(
         err.response?.data
           ?.message ||
-        'Failed to update motorcycle status'
+          'Failed to update motorcycle status'
       );
     }
   };
@@ -777,9 +1063,31 @@ export default function MotorcycleManagement() {
       setMessage(
         err.response?.data
           ?.message ||
-        'Failed to remove motorcycle'
+          'Failed to remove motorcycle'
       );
     }
+  };
+
+  /*
+   * ============================================================
+   * CLOSE MODAL
+   * ============================================================
+   */
+
+  const closeModal = () => {
+    if (
+      submitting ||
+      processingImages
+    ) {
+      return;
+    }
+
+    clearPhotoPreviews();
+
+    setShowModal(false);
+    setPhotos([]);
+    setEditingId(null);
+    setErrors({});
   };
 
   /*
@@ -1090,9 +1398,7 @@ export default function MotorcycleManagement() {
 
         <div
           className="modal-overlay"
-          onClick={() =>
-            setShowModal(false)
-          }
+          onClick={closeModal}
         >
 
           <div
@@ -1108,8 +1414,10 @@ export default function MotorcycleManagement() {
 
             <button
               className="modal-close"
-              onClick={() =>
-                setShowModal(false)
+              onClick={closeModal}
+              disabled={
+                submitting ||
+                processingImages
               }
             >
               <X size={18} />
@@ -1393,11 +1701,13 @@ export default function MotorcycleManagement() {
                   <input
                     type="file"
                     multiple
-                    accept="image/jpeg,image/png,image/webp,image/jpg"
+                    accept="image/*"
+                    capture="environment"
                     onChange={
                       handlePhotoChange
                     }
                     disabled={
+                      processingImages ||
                       submitting
                     }
                   />
@@ -1416,11 +1726,33 @@ export default function MotorcycleManagement() {
                         1.5,
                     }}
                   >
-                    Images are automatically
-                    compressed before upload
-                    to save data and improve
-                    upload speed.
+                    Photos are automatically
+                    compressed to reduce
+                    mobile data usage and
+                    upload time.
                   </small>
+
+                  {processingImages && (
+
+                    <div
+                      style={{
+                        padding:
+                          '10px 12px',
+                        borderRadius:
+                          8,
+                        background:
+                          'rgba(0,0,0,0.04)',
+                        marginBottom:
+                          10,
+                        fontSize:
+                          13,
+                      }}
+                    >
+                      ⏳ Processing images...
+                      Please wait.
+                    </div>
+
+                  )}
 
                   {errors.photos && (
                     <span className="field-error">
@@ -1435,29 +1767,33 @@ export default function MotorcycleManagement() {
 
                     <div
                       style={{
-                        fontSize:
-                          12,
-                        color:
-                          'var(--text-muted)',
                         marginTop:
-                          4,
-                        marginBottom:
                           8,
+                        marginBottom:
+                          10,
                       }}
                     >
 
-                      <strong>
-                        {
-                          photos.length
-                        }
+                      <strong
+                        style={{
+                          fontSize:
+                            13,
+                        }}
+                      >
+                        {photos.length}
                         {' '}
                         photo(s) ready
                       </strong>
 
                       <div
                         style={{
+                          display:
+                            'grid',
+                          gridTemplateColumns:
+                            'repeat(auto-fill, minmax(100px, 1fr))',
+                          gap: 8,
                           marginTop:
-                            6,
+                            8,
                         }}
                       >
 
@@ -1470,25 +1806,110 @@ export default function MotorcycleManagement() {
                             <div
                               key={`${photo.name}-${index}`}
                               style={{
-                                marginBottom:
-                                  4,
+                                position:
+                                  'relative',
+                                borderRadius:
+                                  8,
+                                overflow:
+                                  'hidden',
+                                border:
+                                  '1px solid var(--border)',
                               }}
                             >
 
-                              📷{' '}
-                              {photo.name}
+                              {photoPreviews[
+                                index
+                              ] && (
 
-                              {' — '}
+                                <img
+                                  src={
+                                    photoPreviews[
+                                      index
+                                    ]
+                                  }
+                                  alt={`Preview ${index + 1}`}
+                                  style={{
+                                    width:
+                                      '100%',
+                                    height:
+                                      90,
+                                    objectFit:
+                                      'cover',
+                                    display:
+                                      'block',
+                                  }}
+                                />
 
-                              {(
-                                photo.size /
-                                1024 /
-                                1024
-                              ).toFixed(
-                                2
                               )}
 
-                              {' MB'}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  removePhoto(
+                                    index
+                                  )
+                                }
+                                disabled={
+                                  processingImages ||
+                                  submitting
+                                }
+                                style={{
+                                  position:
+                                    'absolute',
+                                  top: 4,
+                                  right: 4,
+                                  width:
+                                    24,
+                                  height:
+                                    24,
+                                  border:
+                                    'none',
+                                  borderRadius:
+                                    '50%',
+                                  background:
+                                    'rgba(0,0,0,0.7)',
+                                  color:
+                                    '#fff',
+                                  cursor:
+                                    'pointer',
+                                  display:
+                                    'flex',
+                                  alignItems:
+                                    'center',
+                                  justifyContent:
+                                    'center',
+                                }}
+                              >
+                                <X
+                                  size={
+                                    14
+                                  }
+                                />
+                              </button>
+
+                              <div
+                                style={{
+                                  padding:
+                                    '4px 5px',
+                                  fontSize:
+                                    10,
+                                  overflow:
+                                    'hidden',
+                                  textOverflow:
+                                    'ellipsis',
+                                  whiteSpace:
+                                    'nowrap',
+                                }}
+                              >
+                                {(
+                                  photo.size /
+                                  1024 /
+                                  1024
+                                ).toFixed(
+                                  2
+                                )}
+                                {' MB'}
+                              </div>
 
                             </div>
 
@@ -1509,7 +1930,8 @@ export default function MotorcycleManagement() {
                 type="submit"
                 className="btn-primary"
                 disabled={
-                  submitting
+                  submitting ||
+                  processingImages
                 }
                 style={{
                   marginTop:
@@ -1517,8 +1939,10 @@ export default function MotorcycleManagement() {
                 }}
               >
 
-                {submitting
-                  ? 'Processing...'
+                {processingImages
+                  ? 'Processing Images...'
+                  : submitting
+                  ? 'Uploading...'
                   : editingId
                   ? 'Save Changes'
                   : 'Add Motorcycle'}
@@ -1536,4 +1960,3 @@ export default function MotorcycleManagement() {
     </div>
   );
 }
-
