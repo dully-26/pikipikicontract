@@ -8,9 +8,13 @@ return [
     |--------------------------------------------------------------------------
     | Default Database Connection Name
     |--------------------------------------------------------------------------
+    |
+    | This determines which database connection is used by default.
+    | We use MySQL because the application is connected to TiDB Cloud.
+    |
     */
 
-    'default' => env('DB_CONNECTION', 'sqlite'),
+    'default' => env('DB_CONNECTION', 'mysql'),
 
     /*
     |--------------------------------------------------------------------------
@@ -29,15 +33,19 @@ return [
         'sqlite' => [
             'driver' => 'sqlite',
             'url' => env('DB_URL'),
+
             'database' => env(
                 'DB_DATABASE',
                 database_path('database.sqlite')
             ),
+
             'prefix' => '',
+
             'foreign_key_constraints' => env(
                 'DB_FOREIGN_KEYS',
                 true
             ),
+
             'busy_timeout' => null,
             'journal_mode' => null,
             'synchronous' => null,
@@ -49,22 +57,14 @@ return [
         | MySQL / TiDB Cloud
         |--------------------------------------------------------------------------
         |
-        | TiDB Cloud is MySQL compatible and uses TLS/SSL.
+        | TiDB Cloud is MySQL compatible.
         |
-        | The SSL certificate path is loaded from:
+        | TiDB Cloud requires an SSL/TLS connection.
         |
-        | MYSQL_ATTR_SSL_CA
-        |
-        | Local Windows example:
-        | E:/MTEMA-PROJECT/backend/certs/isrgrootx1.pem
-        |
-        | Render example:
-        | /etc/ssl/certs/ca-certificates.crt
-        |
-        |--------------------------------------------------------------------------
         */
 
         'mysql' => [
+
             'driver' => 'mysql',
 
             'url' => env('DB_URL'),
@@ -121,6 +121,13 @@ return [
             |--------------------------------------------------------------------------
             | TiDB Cloud SSL
             |--------------------------------------------------------------------------
+            |
+            | Local:
+            | E:/MTEMA-PROJECT/backend/certs/isrgrootx1.pem
+            |
+            | Render:
+            | certs/isrgrootx1.pem
+            |
             */
 
             'options' => extension_loaded('pdo_mysql')
@@ -139,6 +146,7 @@ return [
         */
 
         'mariadb' => [
+
             'driver' => 'mariadb',
 
             'url' => env('DB_URL'),
@@ -207,6 +215,7 @@ return [
         */
 
         'pgsql' => [
+
             'driver' => 'pgsql',
 
             'url' => env('DB_URL'),
@@ -260,6 +269,7 @@ return [
         */
 
         'sqlsrv' => [
+
             'driver' => 'sqlsrv',
 
             'url' => env('DB_URL'),
@@ -460,4 +470,3 @@ return [
         ],
     ],
 ];
-
