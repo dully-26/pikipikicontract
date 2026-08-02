@@ -26,7 +26,7 @@ export default function Landing() {
 
         <div className="landing-brand">
           <Bike size={22}/>
-          MotoContract
+          PIKIPIKI CONTRACT AND SALES
         </div>
 
 
