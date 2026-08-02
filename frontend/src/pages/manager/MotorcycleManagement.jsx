@@ -1,9 +1,9 @@
-
 import { useEffect, useState } from 'react';
 import api from '../../api/axios';
 import { storageUrl } from '../../utils/storage';
 import { Plus, Pencil, Trash2, X } from 'lucide-react';
 import { validateMotorcycleForm } from '../../utils/validation';
+import imageCompression from 'browser-image-compression';
 
 const emptyForm = {
   brand: '',
@@ -53,7 +53,10 @@ export default function MotorcycleManagement() {
     } catch (err) {
       console.error('Fetch motorcycles error:', err);
 
-      setMessage('Failed to load motorcycles');
+      setMessage(
+        err.response?.data?.message ||
+        'Failed to load motorcycles'
+      );
     } finally {
       setLoading(false);
     }
@@ -94,12 +97,14 @@ export default function MotorcycleManagement() {
       year: m.year || '',
 
       daily_price:
-        m.daily_price !== null && m.daily_price !== undefined
+        m.daily_price !== null &&
+        m.daily_price !== undefined
           ? m.daily_price
           : '',
 
       monthly_price:
-        m.monthly_price !== null && m.monthly_price !== undefined
+        m.monthly_price !== null &&
+        m.monthly_price !== undefined
           ? m.monthly_price
           : '',
 
@@ -110,7 +115,8 @@ export default function MotorcycleManagement() {
           : '',
 
       sale_price:
-        m.sale_price !== null && m.sale_price !== undefined
+        m.sale_price !== null &&
+        m.sale_price !== undefined
           ? m.sale_price
           : '',
 
@@ -131,39 +137,207 @@ export default function MotorcycleManagement() {
 
   /*
    * ============================================================
+   * IMAGE COMPRESSION
+   * ============================================================
+   *
+   * Images are compressed in the browser BEFORE being sent
+   * to Laravel/Cloudinary.
+   *
+   * Maximum size target:
+   * approximately 0.8 MB
+   *
+   * Maximum dimensions:
+   * 1600 x 1600
+   *
+   * Output:
+   * WebP
+   */
+
+  const compressImage = async (file) => {
+    const options = {
+      maxSizeMB: 0.8,
+      maxWidthOrHeight: 1600,
+      useWebWorker: true,
+      fileType: 'image/webp',
+      initialQuality: 0.8,
+    };
+
+    const compressedBlob = await imageCompression(
+      file,
+      options
+    );
+
+    /*
+     * Convert Blob to File
+     *
+     * Laravel will receive this as a normal uploaded file.
+     */
+
+    const originalName =
+      file.name
+        .split('.')
+        .slice(0, -1)
+        .join('.') || 'motorcycle-image';
+
+    const compressedFile = new File(
+      [compressedBlob],
+      `${originalName}.webp`,
+      {
+        type: 'image/webp',
+        lastModified: Date.now(),
+      }
+    );
+
+    return compressedFile;
+  };
+
+  /*
+   * ============================================================
    * IMAGE SELECTION
    * ============================================================
    */
 
-  const handlePhotoChange = (e) => {
+  const handlePhotoChange = async (e) => {
     const files = Array.from(e.target.files || []);
 
-    /*
-     * Only allow images
-     */
-    const imageFiles = files.filter((file) =>
-      file.type.startsWith('image/')
-    );
-
-    /*
-     * Maximum 5MB per image
-     */
-    const validFiles = imageFiles.filter(
-      (file) => file.size <= 5 * 1024 * 1024
-    );
-
-    if (validFiles.length !== imageFiles.length) {
-      setErrors({
-        photos: 'Each image must be an image file and maximum 5MB.',
-      });
-    } else {
-      setErrors((prev) => ({
-        ...prev,
-        photos: undefined,
-      }));
+    if (files.length === 0) {
+      return;
     }
 
-    setPhotos(validFiles);
+    setErrors((prev) => ({
+      ...prev,
+      photos: undefined,
+    }));
+
+    setSubmitting(true);
+
+    try {
+      /*
+       * Only allow image files
+       */
+
+      const imageFiles = files.filter((file) =>
+        file.type.startsWith('image/')
+      );
+
+      if (imageFiles.length !== files.length) {
+        setErrors({
+          photos:
+            'Only image files are allowed.',
+        });
+
+        setPhotos([]);
+
+        return;
+      }
+
+      /*
+       * Compress every selected image
+       */
+
+      const compressedFiles = [];
+
+      for (const file of imageFiles) {
+        /*
+         * Safety check for extremely large files.
+         *
+         * We allow compression to handle normal large images,
+         * but reject files larger than 20MB before processing.
+         */
+
+        if (file.size > 20 * 1024 * 1024) {
+          throw new Error(
+            `${file.name} is larger than 20MB.`
+          );
+        }
+
+        console.log(
+          `Compressing ${file.name}...`
+        );
+
+        console.log(
+          'Original size:',
+          `${(
+            file.size /
+            1024 /
+            1024
+          ).toFixed(2)} MB`
+        );
+
+        const compressedFile =
+          await compressImage(file);
+
+        console.log(
+          'Compressed size:',
+          `${(
+            compressedFile.size /
+            1024 /
+            1024
+          ).toFixed(2)} MB`
+        );
+
+        compressedFiles.push(
+          compressedFile
+        );
+      }
+
+      /*
+       * Final safety check.
+       *
+       * Laravel currently accepts maximum 5MB
+       * per image.
+       */
+
+      const validFiles =
+        compressedFiles.filter(
+          (file) =>
+            file.size <=
+            5 * 1024 * 1024
+        );
+
+      if (
+        validFiles.length !==
+        compressedFiles.length
+      ) {
+        setErrors({
+          photos:
+            'One or more images are still larger than 5MB after compression.',
+        });
+
+        setPhotos([]);
+
+        return;
+      }
+
+      /*
+       * Save compressed files
+       */
+
+      setPhotos(validFiles);
+
+    } catch (error) {
+      console.error(
+        'Image compression error:',
+        error
+      );
+
+      setPhotos([]);
+
+      setErrors({
+        photos:
+          error.message ||
+          'Failed to process the selected images. Please try again.',
+      });
+
+    } finally {
+      setSubmitting(false);
+
+      /*
+       * Allow selecting the same file again.
+       */
+
+      e.target.value = '';
+    }
   };
 
   /*
@@ -181,20 +355,28 @@ export default function MotorcycleManagement() {
     /*
      * Frontend validation
      */
-    const errs = validateMotorcycleForm(form);
 
-    if (Object.keys(errs).length > 0) {
+    const errs =
+      validateMotorcycleForm(form);
+
+    if (
+      Object.keys(errs).length > 0
+    ) {
       setErrors(errs);
       return;
     }
 
     /*
-     * Make sure image is selected when adding.
-     * Remove this check if images should be optional.
+     * Image is required when adding.
      */
-    if (!editingId && photos.length === 0) {
+
+    if (
+      !editingId &&
+      photos.length === 0
+    ) {
       setErrors({
-        photos: 'Please select at least one motorcycle image.',
+        photos:
+          'Please select at least one motorcycle image.',
       });
 
       return;
@@ -218,32 +400,40 @@ export default function MotorcycleManagement() {
             year: form.year,
 
             daily_price:
-              form.listing_type === 'contract'
+              form.listing_type ===
+              'contract'
                 ? form.daily_price
                 : null,
 
             monthly_price:
-              form.listing_type === 'contract'
+              form.listing_type ===
+              'contract'
                 ? form.monthly_price
                 : null,
 
             total_contract_price:
-              form.listing_type === 'contract'
+              form.listing_type ===
+              'contract'
                 ? form.total_contract_price
                 : null,
 
             sale_price:
-              form.listing_type === 'sale'
+              form.listing_type ===
+              'sale'
                 ? form.sale_price
                 : null,
 
-            condition: form.condition,
+            condition:
+              form.condition,
 
-            description: form.description,
+            description:
+              form.description,
           }
         );
 
-        setMessage('Motorcycle updated successfully');
+        setMessage(
+          'Motorcycle updated successfully'
+        );
       }
 
       /*
@@ -253,20 +443,42 @@ export default function MotorcycleManagement() {
        */
 
       else {
-        const data = new FormData();
+        const data =
+          new FormData();
 
         /*
          * Basic fields
          */
-        data.append('brand', String(form.brand));
-        data.append('model', String(form.model));
-        data.append('year', String(form.year));
-        data.append('condition', String(form.condition));
-        data.append('listing_type', String(form.listing_type));
+
+        data.append(
+          'brand',
+          String(form.brand)
+        );
+
+        data.append(
+          'model',
+          String(form.model)
+        );
+
+        data.append(
+          'year',
+          String(form.year)
+        );
+
+        data.append(
+          'condition',
+          String(form.condition)
+        );
+
+        data.append(
+          'listing_type',
+          String(form.listing_type)
+        );
 
         /*
          * Description
          */
+
         if (form.description) {
           data.append(
             'description',
@@ -277,30 +489,46 @@ export default function MotorcycleManagement() {
         /*
          * Contract
          */
-        if (form.listing_type === 'contract') {
+
+        if (
+          form.listing_type ===
+          'contract'
+        ) {
           data.append(
             'daily_price',
-            String(form.daily_price)
+            String(
+              form.daily_price
+            )
           );
 
           data.append(
             'monthly_price',
-            String(form.monthly_price)
+            String(
+              form.monthly_price
+            )
           );
 
           data.append(
             'total_contract_price',
-            String(form.total_contract_price)
+            String(
+              form.total_contract_price
+            )
           );
         }
 
         /*
          * Sale
          */
-        if (form.listing_type === 'sale') {
+
+        if (
+          form.listing_type ===
+          'sale'
+        ) {
           data.append(
             'sale_price',
-            String(form.sale_price)
+            String(
+              form.sale_price
+            )
           );
         }
 
@@ -309,52 +537,71 @@ export default function MotorcycleManagement() {
          * PHOTOS
          * ======================================================
          *
+         * IMPORTANT:
+         *
+         * These are already compressed WebP files.
+         *
          * Laravel expects:
          *
          * photos[]
-         *
-         * Each selected File is appended separately.
          */
 
-        photos.forEach((file) => {
-          data.append('photos[]', file, file.name);
-        });
+        photos.forEach(
+          (file) => {
+            data.append(
+              'photos[]',
+              file,
+              file.name
+            );
+          }
+        );
 
         /*
-         * DEBUG
-         *
-         * Open browser console and you should see:
-         *
-         * brand ...
-         * model ...
-         * photos[] File
+         * DEBUG INFORMATION
          */
 
-        console.log('========== MOTORCYCLE FORM DATA ==========');
+        console.log(
+          '========== MOTORCYCLE FORM DATA =========='
+        );
 
-        for (const [key, value] of data.entries()) {
+        for (
+          const [
+            key,
+            value
+          ] of data.entries()
+        ) {
           console.log(
             key,
             value instanceof File
               ? {
-                  name: value.name,
-                  type: value.type,
-                  size: value.size,
+                  name:
+                    value.name,
+                  type:
+                    value.type,
+                  size:
+                    `${(
+                      value.size /
+                      1024 /
+                      1024
+                    ).toFixed(
+                      2
+                    )} MB`,
                 }
               : value
           );
         }
 
-        console.log('==========================================');
+        console.log(
+          '=========================================='
+        );
 
         /*
          * IMPORTANT:
-         * Do NOT specify Content-Type here.
          *
-         * Axios/browser will automatically create:
+         * DO NOT manually set Content-Type.
          *
-         * multipart/form-data;
-         * boundary=---------------------------
+         * Axios/browser will automatically
+         * create multipart/form-data boundary.
          */
 
         await api.post(
@@ -370,11 +617,13 @@ export default function MotorcycleManagement() {
       /*
        * Close modal
        */
+
       setShowModal(false);
 
       /*
        * Clear form
        */
+
       setForm({
         ...emptyForm,
       });
@@ -386,6 +635,7 @@ export default function MotorcycleManagement() {
       /*
        * Reload motorcycles
        */
+
       await fetchMotorcycles();
 
     } catch (err) {
@@ -402,13 +652,16 @@ export default function MotorcycleManagement() {
       /*
        * Laravel validation errors
        */
+
       const apiErrors =
         err.response?.data?.errors;
 
       if (apiErrors) {
         const flat = {};
 
-        Object.keys(apiErrors).forEach((key) => {
+        Object.keys(
+          apiErrors
+        ).forEach((key) => {
           flat[key] =
             apiErrors[key][0];
         });
@@ -418,22 +671,32 @@ export default function MotorcycleManagement() {
         /*
          * Also show general Laravel message
          */
-        if (err.response?.data?.message) {
-          setErrors((prev) => ({
-            ...prev,
-            general:
-              err.response.data.message,
-          }));
+
+        if (
+          err.response?.data
+            ?.message
+        ) {
+          setErrors(
+            (prev) => ({
+              ...prev,
+              general:
+                err.response
+                  .data
+                  .message,
+            })
+          );
         }
       }
 
       /*
        * General error
        */
+
       else {
         setErrors({
           general:
-            err.response?.data?.message ||
+            err.response?.data
+              ?.message ||
             'Operation failed. Please try again.',
         });
       }
@@ -449,7 +712,10 @@ export default function MotorcycleManagement() {
    * ============================================================
    */
 
-  const changeStatus = async (id, status) => {
+  const changeStatus = async (
+    id,
+    status
+  ) => {
     try {
       await api.patch(
         `/motorcycles/${id}/status`,
@@ -467,7 +733,8 @@ export default function MotorcycleManagement() {
       );
 
       setMessage(
-        err.response?.data?.message ||
+        err.response?.data
+          ?.message ||
         'Failed to update motorcycle status'
       );
     }
@@ -479,7 +746,9 @@ export default function MotorcycleManagement() {
    * ============================================================
    */
 
-  const deleteMotorcycle = async (id) => {
+  const deleteMotorcycle = async (
+    id
+  ) => {
     if (
       !window.confirm(
         'Are you sure you want to remove this motorcycle?'
@@ -506,7 +775,8 @@ export default function MotorcycleManagement() {
       );
 
       setMessage(
-        err.response?.data?.message ||
+        err.response?.data
+          ?.message ||
         'Failed to remove motorcycle'
       );
     }
@@ -529,7 +799,8 @@ export default function MotorcycleManagement() {
           </h1>
 
           <p className="page-subtitle">
-            Add, edit, and manage all motorcycles in the system
+            Add, edit, and manage all
+            motorcycles in the system
           </p>
         </div>
 
@@ -545,7 +816,9 @@ export default function MotorcycleManagement() {
             placeholder="Search brand or model..."
             value={search}
             onChange={(e) =>
-              setSearch(e.target.value)
+              setSearch(
+                e.target.value
+              )
             }
           />
 
@@ -554,9 +827,11 @@ export default function MotorcycleManagement() {
             onClick={openAddModal}
             style={{
               display: 'flex',
-              alignItems: 'center',
+              alignItems:
+                'center',
               gap: 6,
-              whiteSpace: 'nowrap',
+              whiteSpace:
+                'nowrap',
             }}
           >
             <Plus size={16} />
@@ -578,13 +853,15 @@ export default function MotorcycleManagement() {
 
         <p
           style={{
-            color: 'var(--text-muted)',
+            color:
+              'var(--text-muted)',
           }}
         >
           Loading motorcycles...
         </p>
 
-      ) : motorcycles.length === 0 ? (
+      ) : motorcycles.length ===
+        0 ? (
 
         <div className="empty-state">
 
@@ -594,7 +871,8 @@ export default function MotorcycleManagement() {
 
           <p>
             No motorcycles found.
-            Click "Add Motorcycle" to create one.
+            Click "Add Motorcycle"
+            to create one.
           </p>
 
         </div>
@@ -603,184 +881,206 @@ export default function MotorcycleManagement() {
 
         <div className="card-grid">
 
-          {motorcycles.map((m) => (
+          {motorcycles.map(
+            (m) => (
 
-            <div
-              className="motorcycle-card"
-              key={m.id}
-            >
+              <div
+                className="motorcycle-card"
+                key={m.id}
+              >
 
-              <div className="card-image">
+                <div className="card-image">
 
-                {m.photos?.[0] ? (
+                  {m.photos?.[0] ? (
 
-                  <img
-                    src={storageUrl(m.photos[0])}
-                    alt={`${m.brand} ${m.model}`}
-                  />
+                    <img
+                      src={storageUrl(
+                        m.photos[0]
+                      )}
+                      alt={`${m.brand} ${m.model}`}
+                      loading="lazy"
+                    />
 
-                ) : (
+                  ) : (
 
-                  <div className="no-image">
-                    🏍️ No Image
-                  </div>
-
-                )}
-
-                <span
-                  className={`status-badge status-${m.status}`}
-                >
-                  {m.status}
-                </span>
-
-              </div>
-
-              <div className="card-body">
-
-                <h3>
-                  {m.brand} {m.model}
-                </h3>
-
-                <p className="year">
-                  {m.year}
-                  {' • '}
-                  {m.condition}
-                  {' • '}
-                  {m.listing_type}
-                </p>
-
-                {m.listing_type === 'contract' ? (
-
-                  <>
-
-                    <div className="price-row">
-
-                      <span>
-                        Daily:
-                        {' '}
-                        TZS
-                        {' '}
-                        {Number(
-                          m.daily_price
-                        ).toLocaleString()}
-                      </span>
-
-                      <span>
-                        Monthly:
-                        {' '}
-                        TZS
-                        {' '}
-                        {Number(
-                          m.monthly_price
-                        ).toLocaleString()}
-                      </span>
-
+                    <div className="no-image">
+                      🏍️ No Image
                     </div>
+
+                  )}
+
+                  <span
+                    className={`status-badge status-${m.status}`}
+                  >
+                    {m.status}
+                  </span>
+
+                </div>
+
+                <div className="card-body">
+
+                  <h3>
+                    {m.brand}{' '}
+                    {m.model}
+                  </h3>
+
+                  <p className="year">
+                    {m.year}
+                    {' • '}
+                    {m.condition}
+                    {' • '}
+                    {m.listing_type}
+                  </p>
+
+                  {m.listing_type ===
+                  'contract' ? (
+
+                    <>
+
+                      <div className="price-row">
+
+                        <span>
+                          Daily:
+                          {' '}
+                          TZS
+                          {' '}
+                          {Number(
+                            m.daily_price
+                          ).toLocaleString()}
+                        </span>
+
+                        <span>
+                          Monthly:
+                          {' '}
+                          TZS
+                          {' '}
+                          {Number(
+                            m.monthly_price
+                          ).toLocaleString()}
+                        </span>
+
+                      </div>
+
+                      <p className="total-price">
+                        TZS
+                        {' '}
+                        {Number(
+                          m.total_contract_price
+                        ).toLocaleString()}
+                      </p>
+
+                    </>
+
+                  ) : (
 
                     <p className="total-price">
                       TZS
                       {' '}
                       {Number(
-                        m.total_contract_price
+                        m.sale_price
                       ).toLocaleString()}
                     </p>
 
-                  </>
+                  )}
 
-                ) : (
-
-                  <p className="total-price">
-                    TZS
-                    {' '}
-                    {Number(
-                      m.sale_price
-                    ).toLocaleString()}
-                  </p>
-
-                )}
-
-                <select
-                  value={m.status}
-                  onChange={(e) =>
-                    changeStatus(
-                      m.id,
-                      e.target.value
-                    )
-                  }
-                  style={{
-                    width: '100%',
-                    padding: 8,
-                    marginBottom: 10,
-                    borderRadius: 8,
-                    border:
-                      '1px solid var(--border)',
-                    fontSize: 12.5,
-                  }}
-                >
-
-                  <option value="available">
-                    Available
-                  </option>
-
-                  <option value="rented">
-                    Rented
-                  </option>
-
-                  <option value="sold">
-                    Sold
-                  </option>
-
-                  <option value="maintenance">
-                    Under Maintenance
-                  </option>
-
-                </select>
-
-                <div className="card-actions">
-
-                  <button
-                    className="btn-small btn-edit"
-                    onClick={() =>
-                      openEditModal(m)
+                  <select
+                    value={
+                      m.status
                     }
-                  >
-                    <Pencil
-                      size={13}
-                      style={{
-                        verticalAlign:
-                          'middle',
-                        marginRight: 4,
-                      }}
-                    />
-
-                    Edit
-                  </button>
-
-                  <button
-                    className="btn-small btn-delete"
-                    onClick={() =>
-                      deleteMotorcycle(m.id)
+                    onChange={(
+                      e
+                    ) =>
+                      changeStatus(
+                        m.id,
+                        e.target
+                          .value
+                      )
                     }
+                    style={{
+                      width:
+                        '100%',
+                      padding: 8,
+                      marginBottom:
+                        10,
+                      borderRadius:
+                        8,
+                      border:
+                        '1px solid var(--border)',
+                      fontSize:
+                        12.5,
+                    }}
                   >
-                    <Trash2
-                      size={13}
-                      style={{
-                        verticalAlign:
-                          'middle',
-                        marginRight: 4,
-                      }}
-                    />
 
-                    Delete
-                  </button>
+                    <option value="available">
+                      Available
+                    </option>
+
+                    <option value="rented">
+                      Rented
+                    </option>
+
+                    <option value="sold">
+                      Sold
+                    </option>
+
+                    <option value="maintenance">
+                      Under Maintenance
+                    </option>
+
+                  </select>
+
+                  <div className="card-actions">
+
+                    <button
+                      className="btn-small btn-edit"
+                      onClick={() =>
+                        openEditModal(
+                          m
+                        )
+                      }
+                    >
+                      <Pencil
+                        size={13}
+                        style={{
+                          verticalAlign:
+                            'middle',
+                          marginRight:
+                            4,
+                        }}
+                      />
+
+                      Edit
+                    </button>
+
+                    <button
+                      className="btn-small btn-delete"
+                      onClick={() =>
+                        deleteMotorcycle(
+                          m.id
+                        )
+                      }
+                    >
+                      <Trash2
+                        size={13}
+                        style={{
+                          verticalAlign:
+                            'middle',
+                          marginRight:
+                            4,
+                        }}
+                      />
+
+                      Delete
+                    </button>
+
+                  </div>
 
                 </div>
 
               </div>
 
-            </div>
-
-          ))}
+            )
+          )}
 
         </div>
 
@@ -798,7 +1098,8 @@ export default function MotorcycleManagement() {
           <div
             className="modal-box"
             style={{
-              position: 'relative',
+              position:
+                'relative',
             }}
             onClick={(e) =>
               e.stopPropagation()
@@ -829,22 +1130,29 @@ export default function MotorcycleManagement() {
             )}
 
             <form
-              onSubmit={handleSubmit}
+              onSubmit={
+                handleSubmit
+              }
               className="contract-form"
               style={{
                 padding: 0,
-                boxShadow: 'none',
+                boxShadow:
+                  'none',
                 border: 'none',
               }}
             >
 
               <input
                 placeholder="Brand"
-                value={form.brand}
+                value={
+                  form.brand
+                }
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    brand: e.target.value,
+                    brand:
+                      e.target
+                        .value,
                   })
                 }
               />
@@ -857,11 +1165,15 @@ export default function MotorcycleManagement() {
 
               <input
                 placeholder="Model"
-                value={form.model}
+                value={
+                  form.model
+                }
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    model: e.target.value,
+                    model:
+                      e.target
+                        .value,
                   })
                 }
               />
@@ -875,11 +1187,15 @@ export default function MotorcycleManagement() {
               <input
                 type="number"
                 placeholder="Year"
-                value={form.year}
+                value={
+                  form.year
+                }
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    year: e.target.value,
+                    year:
+                      e.target
+                        .value,
                   })
                 }
               />
@@ -891,11 +1207,15 @@ export default function MotorcycleManagement() {
               )}
 
               <select
-                value={form.condition}
+                value={
+                  form.condition
+                }
                 onChange={(e) =>
                   setForm({
                     ...form,
-                    condition: e.target.value,
+                    condition:
+                      e.target
+                        .value,
                   })
                 }
               >
@@ -911,15 +1231,20 @@ export default function MotorcycleManagement() {
               </select>
 
               <select
-                value={form.listing_type}
+                value={
+                  form.listing_type
+                }
                 onChange={(e) =>
                   setForm({
                     ...form,
                     listing_type:
-                      e.target.value,
+                      e.target
+                        .value,
                   })
                 }
-                disabled={!!editingId}
+                disabled={
+                  !!editingId
+                }
               >
 
                 <option value="contract">
@@ -947,14 +1272,17 @@ export default function MotorcycleManagement() {
                       setForm({
                         ...form,
                         daily_price:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   />
 
                   {errors.daily_price && (
                     <span className="field-error">
-                      {errors.daily_price}
+                      {
+                        errors.daily_price
+                      }
                     </span>
                   )}
 
@@ -968,14 +1296,17 @@ export default function MotorcycleManagement() {
                       setForm({
                         ...form,
                         monthly_price:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   />
 
                   {errors.monthly_price && (
                     <span className="field-error">
-                      {errors.monthly_price}
+                      {
+                        errors.monthly_price
+                      }
                     </span>
                   )}
 
@@ -989,16 +1320,21 @@ export default function MotorcycleManagement() {
                       setForm({
                         ...form,
                         total_contract_price:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   />
 
-                  {errors.total_contract_price && (
-                    <span className="field-error">
-                      {errors.total_contract_price}
-                    </span>
-                  )}
+                  {
+                    errors.total_contract_price && (
+                      <span className="field-error">
+                        {
+                          errors.total_contract_price
+                        }
+                      </span>
+                    )
+                  }
 
                 </>
 
@@ -1016,14 +1352,17 @@ export default function MotorcycleManagement() {
                       setForm({
                         ...form,
                         sale_price:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   />
 
                   {errors.sale_price && (
                     <span className="field-error">
-                      {errors.sale_price}
+                      {
+                        errors.sale_price
+                      }
                     </span>
                   )}
 
@@ -1040,7 +1379,8 @@ export default function MotorcycleManagement() {
                   setForm({
                     ...form,
                     description:
-                      e.target.value,
+                      e.target
+                        .value,
                   })
                 }
                 rows={3}
@@ -1057,50 +1397,99 @@ export default function MotorcycleManagement() {
                     onChange={
                       handlePhotoChange
                     }
+                    disabled={
+                      submitting
+                    }
                   />
+
+                  <small
+                    style={{
+                      display:
+                        'block',
+                      marginTop:
+                        6,
+                      marginBottom:
+                        8,
+                      color:
+                        'var(--text-muted)',
+                      lineHeight:
+                        1.5,
+                    }}
+                  >
+                    Images are automatically
+                    compressed before upload
+                    to save data and improve
+                    upload speed.
+                  </small>
 
                   {errors.photos && (
                     <span className="field-error">
-                      {errors.photos}
+                      {
+                        errors.photos
+                      }
                     </span>
                   )}
 
-                  {photos.length > 0 && (
+                  {photos.length >
+                    0 && (
 
                     <div
                       style={{
-                        fontSize: 12,
+                        fontSize:
+                          12,
                         color:
                           'var(--text-muted)',
-                        marginTop: -4,
-                        marginBottom: 8,
+                        marginTop:
+                          4,
+                        marginBottom:
+                          8,
                       }}
                     >
 
-                      {photos.length}
-                      {' '}
-                      photo(s) selected
+                      <strong>
+                        {
+                          photos.length
+                        }
+                        {' '}
+                        photo(s) ready
+                      </strong>
 
                       <div
                         style={{
-                          marginTop: 5,
+                          marginTop:
+                            6,
                         }}
                       >
 
                         {photos.map(
-                          (photo, index) => (
+                          (
+                            photo,
+                            index
+                          ) => (
 
                             <div
                               key={`${photo.name}-${index}`}
+                              style={{
+                                marginBottom:
+                                  4,
+                              }}
                             >
+
+                              📷{' '}
                               {photo.name}
+
                               {' — '}
+
                               {(
                                 photo.size /
                                 1024 /
                                 1024
-                              ).toFixed(2)}
+                              ).toFixed(
+                                2
+                              )}
+
                               {' MB'}
+
                             </div>
 
                           )
@@ -1119,14 +1508,17 @@ export default function MotorcycleManagement() {
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={submitting}
+                disabled={
+                  submitting
+                }
                 style={{
-                  marginTop: 16,
+                  marginTop:
+                    16,
                 }}
               >
 
                 {submitting
-                  ? 'Uploading...'
+                  ? 'Processing...'
                   : editingId
                   ? 'Save Changes'
                   : 'Add Motorcycle'}
