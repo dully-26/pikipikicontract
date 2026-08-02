@@ -887,3 +887,9 @@ textarea {
     font-size: 13px;
   }
 }
+@media (max-width: 768px) {
+  .contract-cards-grid {
+    grid-template-columns: 1fr !important;
+    min-width: 0 !important;
+  }
+}
