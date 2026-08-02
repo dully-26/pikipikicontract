@@ -31,22 +31,38 @@ class ProfileController extends Controller
 
             /*
             |--------------------------------------------------------------------------
-            | Upload image to Cloudinary
+            | Upload to Cloudinary
             |--------------------------------------------------------------------------
+            |
+            | cloudinary-laravel v3 uses uploadApi()->upload()
+            |
             */
 
-            $uploadedFile = Cloudinary::upload(
+            $result = Cloudinary::uploadApi()->upload(
                 $request->file('photo')->getRealPath(),
                 [
                     'folder' => 'mtema-project/profile_photos',
+                    'resource_type' => 'image',
                 ]
             );
 
-            $photoUrl = $uploadedFile->getSecurePath();
+            /*
+            |--------------------------------------------------------------------------
+            | Get Cloudinary URL
+            |--------------------------------------------------------------------------
+            */
+
+            $photoUrl = $result['secure_url'] ?? null;
+
+            if (!$photoUrl) {
+                throw new \Exception(
+                    'Cloudinary haikurudisha secure_url.'
+                );
+            }
 
             /*
             |--------------------------------------------------------------------------
-            | Save Cloudinary URL
+            | Save URL to database
             |--------------------------------------------------------------------------
             */
 
@@ -60,16 +76,22 @@ class ProfileController extends Controller
 
         } catch (\Throwable $e) {
 
-            \Log::error('Cloudinary profile photo upload failed', [
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-            ]);
+            \Log::error(
+                'Cloudinary profile photo upload failed',
+                [
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]
+            );
 
             return response()->json([
-                'message' => 'Imeshindwa kupakia picha kwenye Cloudinary.',
-                'error' => config('app.debug')
-                    ? $e->getMessage()
-                    : null,
+                'message' =>
+                    'Imeshindwa kupakia picha kwenye Cloudinary.',
+
+                'error' =>
+                    config('app.debug')
+                        ? $e->getMessage()
+                        : null,
             ], 500);
         }
     }
@@ -80,9 +102,14 @@ class ProfileController extends Controller
     public function updateInfo(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'full_name' => 'sometimes|required|string|max:255',
-            'phone' => 'sometimes|nullable|string|max:20',
-            'address' => 'sometimes|nullable|string|max:255',
+            'full_name' =>
+                'sometimes|required|string|max:255',
+
+            'phone' =>
+                'sometimes|nullable|string|max:20',
+
+            'address' =>
+                'sometimes|nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
