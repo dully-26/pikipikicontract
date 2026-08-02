@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Camera, Save } from 'lucide-react';
+import imageCompression from 'browser-image-compression';
+
 import api from '../../api/axios';
 import { storageUrl } from '../../utils/storage';
 import { useAuth } from '../../context/AuthContext';
-import imageCompression from 'browser-image-compression';
 
 export default function Profile() {
   const { user, setUser } = useAuth();
@@ -28,13 +29,15 @@ export default function Profile() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+
   /*
-   * ============================================================
-   * COMPRESS PROFILE PHOTO
-   * ============================================================
-   */
+  |--------------------------------------------------------------------------
+  | Compress image
+  |--------------------------------------------------------------------------
+  */
 
   const compressImage = async (file) => {
+
     const options = {
       maxSizeMB: 0.8,
       maxWidthOrHeight: 1200,
@@ -50,9 +53,6 @@ export default function Profile() {
 
     /*
      * Convert Blob to File
-     *
-     * This makes sure Laravel receives
-     * a normal uploaded image file.
      */
 
     const compressedFile = new File(
@@ -67,13 +67,15 @@ export default function Profile() {
     return compressedFile;
   };
 
+
   /*
-   * ============================================================
-   * PROFILE PHOTO
-   * ============================================================
-   */
+  |--------------------------------------------------------------------------
+  | Upload Profile Photo
+  |--------------------------------------------------------------------------
+  */
 
   const handlePhotoChange = async (e) => {
+
     const file = e.target.files?.[0];
 
     if (!file) {
@@ -84,10 +86,13 @@ export default function Profile() {
     setError('');
 
     /*
-     * Only allow images
-     */
+    |--------------------------------------------------------------------------
+    | Validate image
+    |--------------------------------------------------------------------------
+    */
 
     if (!file.type.startsWith('image/')) {
+
       setError(
         'Tafadhali chagua picha tu.'
       );
@@ -97,14 +102,15 @@ export default function Profile() {
       return;
     }
 
+
     /*
-     * Reject extremely large files before compression.
-     *
-     * This protects mobile devices from trying to
-     * process extremely large camera images.
-     */
+    |--------------------------------------------------------------------------
+    | Maximum original file size
+    |--------------------------------------------------------------------------
+    */
 
     if (file.size > 20 * 1024 * 1024) {
+
       setError(
         'Picha ni kubwa sana. Tafadhali chagua picha chini ya 20MB.'
       );
@@ -114,21 +120,29 @@ export default function Profile() {
       return;
     }
 
+
     setUploading(true);
 
+
+    /*
+    |--------------------------------------------------------------------------
+    | Temporary preview
+    |--------------------------------------------------------------------------
+    */
+
+    const temporaryPreview =
+      URL.createObjectURL(file);
+
+    setPreview(temporaryPreview);
+
+
     try {
-      /*
-       * Show original image immediately
-       */
-
-      const temporaryPreview =
-        URL.createObjectURL(file);
-
-      setPreview(temporaryPreview);
 
       /*
-       * Compress image BEFORE uploading
-       */
+      |--------------------------------------------------------------------------
+      | Compress image
+      |--------------------------------------------------------------------------
+      */
 
       console.log(
         'Original image:',
@@ -139,8 +153,10 @@ export default function Profile() {
         ).toFixed(2)} MB`
       );
 
+
       const compressedFile =
         await compressImage(file);
+
 
       console.log(
         'Compressed image:',
@@ -151,26 +167,32 @@ export default function Profile() {
         ).toFixed(2)} MB`
       );
 
+
       /*
-       * Final safety check
-       */
+      |--------------------------------------------------------------------------
+      | Final size check
+      |--------------------------------------------------------------------------
+      */
 
       if (
         compressedFile.size >
         5 * 1024 * 1024
       ) {
+
         throw new Error(
           'Picha bado ni kubwa baada ya compression. Tafadhali chagua picha nyingine.'
         );
       }
 
+
       setPhoto(compressedFile);
 
+
       /*
-       * ========================================================
-       * UPLOAD TO BACKEND / CLOUDINARY
-       * ========================================================
-       */
+      |--------------------------------------------------------------------------
+      | FormData
+      |--------------------------------------------------------------------------
+      */
 
       const data = new FormData();
 
@@ -180,32 +202,49 @@ export default function Profile() {
         'profile-photo.jpg'
       );
 
+
+      /*
+      |--------------------------------------------------------------------------
+      | Upload to Laravel
+      |--------------------------------------------------------------------------
+      */
+
       const res = await api.post(
         '/profile/photo',
         data
       );
 
+
       /*
-       * Backend should return updated user
-       */
+      |--------------------------------------------------------------------------
+      | Update user
+      |--------------------------------------------------------------------------
+      */
 
       setMessage(
         'Picha ya profaili imesasishwa!'
       );
+
 
       localStorage.setItem(
         'user',
         JSON.stringify(res.data)
       );
 
-      setUser?.(res.data);
+
+      if (setUser) {
+        setUser(res.data);
+      }
+
 
       /*
-       * Use the newly returned Cloudinary/storage
-       * image as the permanent preview.
-       */
+      |--------------------------------------------------------------------------
+      | Update permanent preview
+      |--------------------------------------------------------------------------
+      */
 
       if (res.data?.profile_photo) {
+
         setPreview(
           storageUrl(
             res.data.profile_photo
@@ -213,20 +252,25 @@ export default function Profile() {
         );
       }
 
+
     } catch (err) {
+
       console.error(
         'Profile photo upload error:',
         err
       );
 
       console.error(
-        'Response:',
+        'Server response:',
         err.response?.data
       );
 
+
       /*
-       * Restore previous profile image
-       */
+      |--------------------------------------------------------------------------
+      | Restore old profile photo
+      |--------------------------------------------------------------------------
+      */
 
       setPreview(
         user?.profile_photo
@@ -236,70 +280,105 @@ export default function Profile() {
           : null
       );
 
+
       setPhoto(null);
 
+
+      /*
+      |--------------------------------------------------------------------------
+      | Display error
+      |--------------------------------------------------------------------------
+      */
+
       setError(
+        err.response?.data?.error ||
         err.response?.data?.message ||
         err.message ||
         'Imeshindwa kupakia picha. Tafadhali jaribu tena.'
       );
 
+
     } finally {
+
       setUploading(false);
 
       /*
-       * Allow user to select the same image again
-       */
+      |--------------------------------------------------------------------------
+      | Allow selecting same image again
+      |--------------------------------------------------------------------------
+      */
 
       e.target.value = '';
     }
   };
 
+
   /*
-   * ============================================================
-   * SAVE PROFILE INFORMATION
-   * ============================================================
-   */
+  |--------------------------------------------------------------------------
+  | Save Profile Information
+  |--------------------------------------------------------------------------
+  */
 
   const handleSaveInfo = async (e) => {
+
     e.preventDefault();
 
     setSaving(true);
+
     setError('');
     setMessage('');
 
+
     try {
+
       const res = await api.put(
         '/profile',
         form
       );
 
+
       setMessage(
         'Taarifa zimesasishwa kwa mafanikio!'
       );
+
 
       localStorage.setItem(
         'user',
         JSON.stringify(res.data)
       );
 
-      setUser?.(res.data);
+
+      if (setUser) {
+        setUser(res.data);
+      }
+
 
     } catch (err) {
+
       console.error(
         'Profile update error:',
         err
       );
+
 
       setError(
         err.response?.data?.message ||
         'Imeshindwa kusasisha taarifa'
       );
 
+
     } finally {
+
       setSaving(false);
     }
   };
+
+
+  /*
+  |--------------------------------------------------------------------------
+  | Render
+  |--------------------------------------------------------------------------
+  */
 
   return (
     <div className="page">
@@ -308,9 +387,11 @@ export default function Profile() {
         Profaili Yangu
       </h1>
 
+
       <p className="page-subtitle">
         Sasisha picha na taarifa zako binafsi
       </p>
+
 
       {message && (
         <div className="alert-success">
@@ -318,11 +399,13 @@ export default function Profile() {
         </div>
       )}
 
+
       {error && (
         <div className="alert-error">
           {error}
         </div>
       )}
+
 
       <div
         className="contract-form"
@@ -344,6 +427,9 @@ export default function Profile() {
               <img
                 src={preview}
                 alt="Profile"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
               />
 
             ) : (
@@ -352,16 +438,16 @@ export default function Profile() {
 
                 {user?.full_name
                   ?.split(' ')
-                  .map(
-                    (n) => n[0]
-                  )
+                  .map((n) => n[0])
                   .slice(0, 2)
                   .join('')
-                  .toUpperCase()}
+                  .toUpperCase()
+                }
 
               </div>
 
             )}
+
 
             <label
               className="profile-photo-edit-btn"
@@ -369,6 +455,7 @@ export default function Profile() {
                 cursor: uploading
                   ? 'not-allowed'
                   : 'pointer',
+
                 opacity: uploading
                   ? 0.6
                   : 1
@@ -377,12 +464,11 @@ export default function Profile() {
 
               <Camera size={14} />
 
+
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp,image/jpg"
-                onChange={
-                  handlePhotoChange
-                }
+                onChange={handlePhotoChange}
                 disabled={uploading}
                 hidden
               />
@@ -391,13 +477,13 @@ export default function Profile() {
 
           </div>
 
+
           {uploading && (
 
             <p
               style={{
                 fontSize: 12,
-                color:
-                  'var(--text-muted)',
+                color: 'var(--text-muted)',
                 marginTop: 8
               }}
             >
@@ -407,20 +493,19 @@ export default function Profile() {
 
           )}
 
+
           {!uploading && (
 
             <p
               style={{
                 fontSize: 11.5,
-                color:
-                  'var(--text-muted)',
+                color: 'var(--text-muted)',
                 marginTop: 8,
                 lineHeight: 1.5
               }}
             >
               Picha itapunguzwa ukubwa
-              automatically kabla ya
-              ku-upload.
+              automatically kabla ya ku-upload.
             </p>
 
           )}
@@ -448,13 +533,13 @@ export default function Profile() {
             Jina Kamili
           </label>
 
+
           <input
             value={form.full_name}
             onChange={(e) =>
               setForm({
                 ...form,
-                full_name:
-                  e.target.value
+                full_name: e.target.value
               })
             }
           />
@@ -471,13 +556,13 @@ export default function Profile() {
             Simu
           </label>
 
+
           <input
             value={form.phone}
             onChange={(e) =>
               setForm({
                 ...form,
-                phone:
-                  e.target.value
+                phone: e.target.value
               })
             }
           />
@@ -494,13 +579,13 @@ export default function Profile() {
             Anwani
           </label>
 
+
           <input
             value={form.address}
             onChange={(e) =>
               setForm({
                 ...form,
-                address:
-                  e.target.value
+                address: e.target.value
               })
             }
           />
@@ -519,14 +604,15 @@ export default function Profile() {
               size={15}
               style={{
                 marginRight: 6,
-                verticalAlign:
-                  'middle'
+                verticalAlign: 'middle'
               }}
             />
 
+
             {saving
               ? 'Inahifadhi...'
-              : 'Hifadhi Mabadiliko'}
+              : 'Hifadhi Mabadiliko'
+            }
 
           </button>
 
@@ -537,4 +623,3 @@ export default function Profile() {
     </div>
   );
 }
-
